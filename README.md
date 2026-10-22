@@ -6,6 +6,9 @@
   <p><img alt="Windows 11 x64" src="https://img.shields.io/badge/Windows_11-x64-0078D4"> <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4"> <img alt="Version 1.1.5" src="https://img.shields.io/badge/version-1.1.5-25875A"></p>
 </div>
 
+***!!! Навайбкодил, да !!!*** 
+
+
 ## Возможности
 
 - **Локальная коллекция:** добавьте папки с сериалами; PCinema найдёт видео во вложенных каталогах, не перемещая и не переименовывая файлы.
