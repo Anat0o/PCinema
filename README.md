@@ -1,6 +1,7 @@
 <div align="center">
   <img src="PCinema/Assets/pcinema-logo.png" width="96" alt="PCinema logo">
   <h1>PCinema</h1>
+  <p><strong>Создано с помощью OpenAI Codex · Built with OpenAI Codex</strong></p>
   <p><strong>Ваши сериалы. Ваша библиотека. На вашем компьютере.</strong></p>
   <p>Десктопная библиотека локальных сериалов для Windows с постерами TMDB,<br>встроенным плеером и продолжением с того места, где вы остановились.</p>
   <p><img alt="Windows 11 x64" src="https://img.shields.io/badge/Windows_11-x64-0078D4"> <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4"> <img alt="Version 1.1.5" src="https://img.shields.io/badge/version-1.1.5-25875A"></p>
