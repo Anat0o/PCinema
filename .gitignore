@@ -1,0 +1,17 @@
+**/bin/
+**/obj/
+.tools/
+artifacts/
+*.user
+.secrets/
+# Local settings, credentials and runtime data
+.env
+.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.log
+.vs/
