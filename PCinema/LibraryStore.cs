@@ -1,4 +1,4 @@
-using Microsoft.Data.Sqlite;
+﻿using Microsoft.Data.Sqlite;
 using System.IO;
 namespace PCinema;
 
@@ -43,8 +43,11 @@ public sealed partial class LibraryStore
     }
     public void SaveProgress(Episode e)
     {
-        e.LastPlayed=DateTime.UtcNow.ToString("O");
-        Execute("BEGIN IMMEDIATE; UPDATE episodes SET position=$p,duration=$d,watched=$w,last_played=$l WHERE id=$i; INSERT INTO watch_history(identity,position,duration,watched,last_played) SELECT "+IdentitySql+",$p,$d,$w,$l FROM episodes e JOIN series s ON s.id=e.series_id WHERE e.id=$i ON CONFLICT(identity) DO UPDATE SET position=excluded.position,duration=excluded.duration,watched=excluded.watched,last_played=excluded.last_played; COMMIT;", ("$p", e.Position), ("$d", e.Duration), ("$w", e.Watched), ("$l", e.LastPlayed), ("$i", e.Id));
+        e.LastPlayed=DateTime.UtcNow.ToString("O");SaveProgress(ProgressSnapshot.From(e));
+    }
+    public void SaveProgress(ProgressSnapshot snapshot)
+    {
+        Execute("BEGIN IMMEDIATE; UPDATE episodes SET position=$p,duration=$d,watched=$w,last_played=$l WHERE id=$i AND last_played<=$l; INSERT INTO watch_history(identity,position,duration,watched,last_played) SELECT "+IdentitySql+",$p,$d,$w,$l FROM episodes e JOIN series s ON s.id=e.series_id WHERE e.id=$i AND e.last_played<=$l ON CONFLICT(identity) DO UPDATE SET position=excluded.position,duration=excluded.duration,watched=excluded.watched,last_played=excluded.last_played WHERE excluded.last_played>=watch_history.last_played; COMMIT;", ("$p", snapshot.Position), ("$d", snapshot.Duration), ("$w", snapshot.Watched), ("$l", snapshot.ChangedAt), ("$i", snapshot.EpisodeId));
     }
     public void Relink(Episode e, string path)
     {

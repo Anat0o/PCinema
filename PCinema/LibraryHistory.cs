@@ -19,14 +19,17 @@ public sealed partial class LibraryStore
 
     public HashSet<long> RemovedFiles()=>Query("SELECT episode_id FROM removed_files",r=>r.GetInt64(0)).ToHashSet();
 
-    public List<Series> LoadCatalog()
+    public List<Series> LoadCatalog()=>LoadCatalog(false);
+    public List<Series> LoadCatalog(bool includeRemoved)
     {
         var removed=RemovedFiles();var all=Load();var result=new List<Series>();
         var excluded=Query("SELECT value FROM settings WHERE key LIKE 'excluded_source:%'",r=>r.GetString(0));var active=Folders();
+        bool Visible(Episode e)=>!removed.Contains(e.Id)&&(!excluded.Any(p=>UnderSource(e.Path,p))||active.Any(f=>UnderSource(e.Path,f.Path)));
+        if(includeRemoved)foreach(var ep in all.SelectMany(s=>s.Episodes))if(!Visible(ep))ep.Available=false;
         foreach(var group in all.GroupBy(s=>s.TmdbId.HasValue?$"tmdb:{s.TmdbId}":$"local:{s.Id}"))
         {
             var representative=group.OrderBy(s=>s.Id).First();
-            representative.Episodes=group.SelectMany(s=>s.Episodes).Where(e=>!removed.Contains(e.Id)&&(!excluded.Any(p=>UnderSource(e.Path,p))||active.Any(f=>UnderSource(e.Path,f.Path))))
+            representative.Episodes=group.SelectMany(s=>s.Episodes).Where(e=>includeRemoved||Visible(e))
                 .GroupBy(e=>e.Season.HasValue&&e.Number.HasValue?$"{e.Season}:{e.Number}":$"file:{e.Id}")
                 .Select(g=>g.OrderByDescending(e=>e.Available).ThenByDescending(e=>e.Id).First())
                 .OrderBy(e=>e.Season).ThenBy(e=>e.Number).ThenBy(e=>e.Path).ToList();

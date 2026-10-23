@@ -7,7 +7,7 @@ using System.Text;
 using System.Text.Json;
 namespace PCinema;
 
-public sealed class TmdbService : IDisposable
+public sealed partial class TmdbService : IDisposable
 {
     readonly LibraryStore store; readonly HttpClient client; readonly bool ownsClient;
     readonly string builtin; readonly CancellationTokenSource shutdown = new();

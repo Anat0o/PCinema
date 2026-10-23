@@ -1,4 +1,4 @@
-﻿using System.Windows;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Media;
@@ -14,9 +14,10 @@ public sealed class LibraryScreen : Screen
     readonly DispatcherTimer debounce=new(){Interval=TimeSpan.FromMilliseconds(160)};
     readonly TextBlock empty=Ui.Text("Нет сериалов. Добавьте папку в настройках или измените поиск.");
     int columns=4;
+    readonly System.Collections.ObjectModel.ObservableCollection<Series[]> buckets=[];
     public LibraryScreen(MainWindow host,LibraryStore store,bool unmatched=false):base(host)
     {
-        this.store=store; if(unmatched) filter.SelectedItem="Нераспознанное"; var root=new DockPanel{Margin=new(56,110,40,20)};
+        this.store=store; rows.ItemsSource=buckets; if(unmatched) filter.SelectedItem="Нераспознанное"; var root=new DockPanel{Margin=new(56,110,40,20)};
         var header=new StackPanel();header.Children.Add(Ui.Text("Библиотека",32,true));var bar=new WrapPanel();bar.Children.Add(search);bar.Children.Add(filter);header.Children.Add(bar);header.Children.Add(empty);
         DockPanel.SetDock(header,Dock.Top);root.Children.Add(header);root.Children.Add(rows);Content=root;
         var template=new DataTemplate();var items=new FrameworkElementFactory(typeof(ItemsControl));items.SetBinding(ItemsControl.ItemsSourceProperty,new Binding());items.SetValue(ItemsControl.ItemTemplateProperty,host.FindResource("Card"));
@@ -28,12 +29,12 @@ public sealed class LibraryScreen : Screen
         Loaded+=(_,_)=>search.Focus();RefreshData();
     }
     void Queue(){debounce.Stop();debounce.Start();}
-    public override async void RefreshData(){data=await Task.Run(store.LoadCatalog);Filter();}
+    public override async void RefreshData(){await Host.Progress.DrainAsync();var latest=await Task.Run(store.LoadCatalog);var old=data.ToDictionary(s=>s.Id);data=latest.Select(s=>{if(old.TryGetValue(s.Id,out var existing)){existing.ApplyFrom(s);return existing;}return s;}).ToList();Filter();}
     void Filter()
     {
         var f=filter.SelectedItem as string;var q=search.Text.Trim();
         var result=data.Where(s=>(f=="Все" || (f=="Нераспознанное" ? s.TmdbId==null||s.Episodes.Any(e=>!e.Number.HasValue) : s.State==f))&&(s.Title.Contains(q,StringComparison.OrdinalIgnoreCase)||s.SearchTitle.Contains(q,StringComparison.OrdinalIgnoreCase))).OrderBy(s=>s.Title).ToList();
-        rows.ItemsSource=result.Chunk(columns).ToList();empty.Visibility=result.Count==0?Visibility.Visible:Visibility.Collapsed;
+        var desired=result.Chunk(columns).ToList();while(buckets.Count>desired.Count)buckets.RemoveAt(buckets.Count-1);for(int i=0;i<desired.Count;i++){if(i>=buckets.Count)buckets.Add(desired[i]);else if(!buckets[i].Select(s=>s.Id).SequenceEqual(desired[i].Select(s=>s.Id)))buckets[i]=desired[i];}empty.Visibility=result.Count==0?Visibility.Visible:Visibility.Collapsed;
     }
     public override void Leave()=>debounce.Stop();
 }
@@ -56,15 +57,19 @@ public sealed class SettingsWindow : Screen
         p.Children.Add(Ui.Panel(library));
         var playback=new StackPanel();playback.Children.Add(Ui.Text("Воспроизведение",20,true));
         var auto=new CheckBox{Content="Автоматически включать следующую серию",IsChecked=store.Setting("autoplay_next")!="false",Foreground=Brushes.White,Margin=new(0,4,0,12)};
-        auto.Checked+=(_,_)=>store.Setting("autoplay_next","true");auto.Unchecked+=(_,_)=>store.Setting("autoplay_next","false");playback.Children.Add(auto);
+        auto.Checked+=async(_,_)=>{Host.SetAutoplay(true);await Task.Run(()=>store.Setting("autoplay_next","true"));};auto.Unchecked+=async(_,_)=>{Host.SetAutoplay(false);await Task.Run(()=>store.Setting("autoplay_next","false"));};playback.Children.Add(auto);
         playback.Children.Add(Ui.Text("После завершения — отсчёт 5 секунд с кнопкой отмены. Недоступные файлы пропускаются. Настройка сохраняется сразу.",13));
+        playback.Children.Add(Ui.Text("Декодирование видео",16,true));
+        var decoding=new ComboBox{ItemsSource=new[]{"Автоматически","Программное"},SelectedIndex=store.Setting("software_decoding")=="true"?1:0};
+        decoding.SelectionChanged+=async(_,_)=>{var value=decoding.SelectedIndex==1?"true":"false";await Task.Run(()=>store.Setting("software_decoding",value));};playback.Children.Add(decoding);
+        playback.Children.Add(Ui.Text("Программный режим может помочь при зависании изображения после перемотки. Применяется при следующем открытии видео.",13));
         playback.Children.Add(Ui.Text("В плеере: щелчок по видео — пауза, двойной щелчок — полный экран, колесо — громкость. Оформление субтитров — в меню ⚙ плеера.",13));p.Children.Add(Ui.Panel(playback));
         var api=new StackPanel();api.Children.Add(Ui.Text("Постеры и описания · TMDB",20,true));api.Children.Add(Ui.Text("Встроенный токен работает сразу. При желании используйте свой API Read Access Token."));
         mode.SelectedIndex=tmdb.Mode=="custom"?1:tmdb.Mode=="off"?2:0;api.Children.Add(mode);api.Children.Add(token);token.Visibility=mode.SelectedIndex==1?Visibility.Visible:Visibility.Collapsed;
         mode.SelectionChanged+=(_,_)=>token.Visibility=mode.SelectedIndex==1?Visibility.Visible:Visibility.Collapsed;
         var buttons=new WrapPanel();buttons.Children.Add(Ui.Button("Сохранить",Save,true));
         var test=Ui.Button("Проверить подключение",async()=>{try{await tmdb.TestConnection();status.Text="TMDB доступен. Подключение работает.";}catch(Exception ex){status.Text=ex.Message;}});buttons.Children.Add(test);api.Children.Add(buttons);api.Children.Add(status);p.Children.Add(Ui.Panel(api));
-        p.Children.Add(Ui.Text("PCinema 1.1.5 · Видео остаётся на вашем компьютере",15,true));
+        p.Children.Add(Ui.Text("PCinema 1.2.0 · Видео остаётся на вашем компьютере",15,true));
         p.Children.Add(new Image { Source=new System.Windows.Media.Imaging.BitmapImage(new Uri("pack://application:,,,/PCinema;component/Assets/tmdb-logo.png")), Width=100, Height=36, Stretch=Stretch.Uniform, HorizontalAlignment=HorizontalAlignment.Left, Margin=new(0,10,0,14) });
         p.Children.Add(Ui.Text("Данные и изображения: The Movie Database (TMDB).\nThis product uses the TMDB API but is not endorsed or certified by TMDB.",12));
         Content=new ScrollViewer{Content=p,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
@@ -121,20 +126,22 @@ public sealed class SeriesWindow : Screen
         if(episodes.Parent is Panel episodeParent) episodeParent.Children.Remove(episodes);
         root.Children.Clear();
         var hero=new Grid{Height=530,Background=new SolidColorBrush(Color.FromRgb(24,27,30))};
-        var backdrop=new Image{Source=LocalImageConverter.Load(series.Backdrop,1600),Stretch=Stretch.UniformToFill};hero.Children.Add(backdrop);
+        var backdrop=AsyncImage.Create(series.Backdrop,1600);backdrop.Stretch=Stretch.UniformToFill;hero.Children.Add(backdrop);
         hero.Children.Add(new System.Windows.Shapes.Rectangle{Fill=new LinearGradientBrush(new GradientStopCollection{new(Color.FromArgb(190,16,17,19),0),new(Color.FromArgb(70,16,17,19),0.65),new(Color.FromArgb(255,16,17,19),1)},new Point(0,0),new Point(0,1))});
         var layout=new Grid{Margin=new(64,130,64,36)};layout.ColumnDefinitions.Add(new(){Width=new(3,GridUnitType.Star)});layout.ColumnDefinitions.Add(new(){Width=new(1,GridUnitType.Star)});
         var info=new StackPanel{MaxWidth=650,HorizontalAlignment=HorizontalAlignment.Left};
-        if(series.Logo!=null)info.Children.Add(new Image{Source=LocalImageConverter.Load(series.Logo,600),Height=110,MaxWidth=340,Stretch=Stretch.Uniform,HorizontalAlignment=HorizontalAlignment.Left,Margin=new(0,0,0,18)});
+        if(series.Logo!=null){var logo=AsyncImage.Create(series.Logo,600);logo.Height=110;logo.MaxWidth=340;logo.Stretch=Stretch.Uniform;logo.HorizontalAlignment=HorizontalAlignment.Left;logo.Margin=new(0,0,0,18);info.Children.Add(logo);}
         else info.Children.Add(Ui.Text(series.Title,38,true));
         info.Children.Add(Ui.Text(series.Details,15,true));
-        var actions=new WrapPanel();actions.Children.Add(Ui.Button(series.State=="В процессе"?"Продолжить":"Смотреть",()=>Play(PlaybackSelection.Continue(series)),true));var more=Ui.Button("⋯",()=>{});more.ToolTip="Действия с сериалом";more.Click+=(_,_)=>ShowSeriesMenu(more);actions.Children.Add(more);info.Children.Add(actions);
+        var actions=new WrapPanel();var play=Ui.Button(series.State=="В процессе"?"Продолжить":"Смотреть",()=>Play(PlaybackSelection.Continue(series)),true);play.IsEnabled=series.Episodes.Any(e=>e.Available);actions.Children.Add(play);var more=Ui.Button("⋯",()=>{});more.ToolTip="Действия с сериалом";more.Click+=(_,_)=>ShowSeriesMenu(more);actions.Children.Add(more);info.Children.Add(actions);
         var overview=Ui.Text(series.Overview,16);overview.MaxHeight=150;overview.TextTrimming=TextTrimming.CharacterEllipsis;overview.Margin=new(0,20,26,0);info.Children.Add(overview);layout.Children.Add(info);
-        var facts=new StackPanel();facts.Children.Add(Ui.Text("В ВАШЕЙ БИБЛИОТЕКЕ",11));facts.Children.Add(Ui.Text(series.ProgressLabel,18,true));facts.Children.Add(Ui.Text($"Сезонов: {series.Episodes.Where(e=>e.Season.HasValue).Select(e=>e.Season).Distinct().Count()}"));facts.Children.Add(Ui.Text($"Доступно серий: {series.Episodes.Count(e=>e.Available)}"));facts.Children.Add(Ui.Text(series.State));
+        var facts=new StackPanel();facts.Children.Add(Ui.Text("В ВАШЕЙ БИБЛИОТЕКЕ",11));var progressLabel=Ui.Text("",18,true);progressLabel.SetBinding(TextBlock.TextProperty,new Binding("ProgressLabel"){Source=series});facts.Children.Add(progressLabel);facts.Children.Add(Ui.Text($"Сезонов: {series.Episodes.Where(e=>e.Season.HasValue).Select(e=>e.Season).Distinct().Count()}"));facts.Children.Add(Ui.Text($"Доступно серий: {series.Episodes.Count(e=>e.Available)}"));var stateLabel=Ui.Text("");stateLabel.SetBinding(TextBlock.TextProperty,new Binding("State"){Source=series});facts.Children.Add(stateLabel);
         var factsPanel=Ui.Panel(facts);factsPanel.VerticalAlignment=VerticalAlignment.Bottom;Grid.SetColumn(factsPanel,1);layout.Children.Add(factsPanel);hero.Children.Add(layout);root.Children.Add(hero);
         var section=new StackPanel{Margin=new(64,0,64,32)};var heading=new DockPanel();var title=Ui.Text("Серии",24,true);DockPanel.SetDock(title,Dock.Left);heading.Children.Add(title);
         seasons.ItemsSource=new[]{"Все сезоны"}.Concat(series.Episodes.Where(e=>e.Season.HasValue).Select(e=>e.Season!.Value).Distinct().Order().Select(n=>"Сезон "+n)).ToList();seasons.SelectedItem=previous??"Все сезоны";if(seasons.SelectedIndex<0)seasons.SelectedIndex=0;
         seasons.HorizontalAlignment=HorizontalAlignment.Right;heading.Children.Add(seasons);section.Children.Add(heading);
+        var check=Ui.Button("Проверить наличие всех серий",()=>Host.Navigate(new CoverageScreen(Host,store,tmdb,series)));check.HorizontalAlignment=HorizontalAlignment.Left;section.Children.Add(check);
+        if(!series.Episodes.Any(e=>e.Available))section.Children.Add(Ui.Text("Локальные файлы недоступны. История сохранена. Добавьте папку в настройках или укажите другой файл в меню серии."));
         episodes.ItemTemplate=EpisodeTemplate();section.Children.Add(episodes);Fill();
         root.Children.Add(section);
     }
@@ -147,9 +154,9 @@ public sealed class SeriesWindow : Screen
             var button=new FrameworkElementFactory(typeof(Button));button.SetValue(ContentControl.ContentProperty,text);button.SetValue(FrameworkElement.ToolTipProperty,tooltip);button.SetValue(Control.PaddingProperty,new Thickness(12,8,12,8));button.AddHandler(Button.ClickEvent,click);actions.AppendChild(button);
         }
         Action("▶","Смотреть серию",(sender,e)=>{e.Handled=true;if(((FrameworkElement)sender).DataContext is Episode ep)Play(ep);});
-        Action("✓","Изменить отметку просмотра",(sender,e)=>{e.Handled=true;if(((FrameworkElement)sender).DataContext is Episode ep){ep.Watched=!ep.Watched;store.SaveProgress(ep);RefreshData();}});
+        Action("✓","Изменить отметку просмотра",(sender,e)=>{e.Handled=true;if(((FrameworkElement)sender).DataContext is Episode ep){ep.Watched=!ep.Watched;store.SaveProgress(ep);ep.NotifyUpdated();series.NotifyUpdated();RefreshData();}});
         Action("⋯","Другие действия с серией",(sender,e)=>{e.Handled=true;var button=(Button)sender;if(button.DataContext is Episode ep)ShowEpisodeMenu(button,ep);});row.AppendChild(actions);
-        var image=new FrameworkElementFactory(typeof(Image));image.SetValue(DockPanel.DockProperty,Dock.Left);image.SetValue(FrameworkElement.WidthProperty,132.0);image.SetValue(FrameworkElement.HeightProperty,74.0);image.SetValue(FrameworkElement.MarginProperty,new Thickness(0,0,20,0));image.SetValue(Image.StretchProperty,Stretch.UniformToFill);image.SetBinding(Image.SourceProperty,new Binding("Still"){Converter=new LocalImageConverter(),ConverterParameter=300});row.AppendChild(image);
+        var image=new FrameworkElementFactory(typeof(Image));image.SetValue(DockPanel.DockProperty,Dock.Left);image.SetValue(FrameworkElement.WidthProperty,132.0);image.SetValue(FrameworkElement.HeightProperty,74.0);image.SetValue(FrameworkElement.MarginProperty,new Thickness(0,0,20,0));image.SetValue(Image.StretchProperty,Stretch.UniformToFill);image.SetValue(AsyncImage.WidthProperty,300);image.SetBinding(AsyncImage.PathProperty,new Binding("Still"));row.AppendChild(image);
         var column=new FrameworkElementFactory(typeof(StackPanel));column.SetValue(FrameworkElement.VerticalAlignmentProperty,VerticalAlignment.Center);var label=new FrameworkElementFactory(typeof(TextBlock));label.SetBinding(TextBlock.TextProperty,new Binding("Label"));label.SetValue(TextBlock.FontWeightProperty,FontWeights.SemiBold);column.AppendChild(label);
         var title=new FrameworkElementFactory(typeof(TextBlock));title.SetBinding(TextBlock.TextProperty,new Binding("DisplayTitle"));title.SetValue(FrameworkElement.MarginProperty,new Thickness(0,6,12,6));title.SetValue(TextBlock.TextTrimmingProperty,TextTrimming.CharacterEllipsis);column.AppendChild(title);
         var status=new FrameworkElementFactory(typeof(TextBlock));status.SetBinding(TextBlock.TextProperty,new Binding("Status"));status.SetValue(TextBlock.ForegroundProperty,Ui.Muted);status.SetValue(TextBlock.FontSizeProperty,12.0);column.AppendChild(status);row.AppendChild(column);template.VisualTree=row;return template;
@@ -188,9 +195,9 @@ public sealed class SeriesWindow : Screen
     public override async void RefreshData()
     {
         if(refreshing)return;refreshing=true;
-        try{var latest=await Task.Run(()=>store.LoadCatalog().FirstOrDefault(s=>s.Id==series.Id || (series.TmdbId.HasValue && s.TmdbId==series.TmdbId)));if(latest!=null){series=latest;Build();}else{Content=Ui.Panel(Ui.Text("Файлы сериала удалены. История просмотра сохранена. Вернитесь в библиотеку кнопкой «Назад».",20));}}finally{refreshing=false;}
+        try{await Host.Progress.DrainAsync();var latest=await Task.Run(()=>store.LoadCatalog(true).FirstOrDefault(s=>s.Id==series.Id || (series.TmdbId.HasValue && s.TmdbId==series.TmdbId)));if(latest!=null){var headerChanged=series.Episodes.Any(e=>e.Available)!=latest.Episodes.Any(e=>e.Available)||series.Title!=latest.Title||series.Overview!=latest.Overview||series.Backdrop!=latest.Backdrop||series.Poster!=latest.Poster||series.Logo!=latest.Logo||series.Details!=latest.Details;var rowsChanged=!series.Episodes.Select(e=>(e.Id,e.Season,e.Number)).SequenceEqual(latest.Episodes.Select(e=>(e.Id,e.Season,e.Number)));var scroll=Content as ScrollViewer;var offset=scroll?.VerticalOffset??0;var selected=(episodes.SelectedItem as Episode)?.Id;series.ApplyFrom(latest);if(headerChanged||rowsChanged){Build();episodes.SelectedItem=series.Episodes.FirstOrDefault(e=>e.Id==selected);_=Dispatcher.BeginInvoke(()=>scroll?.ScrollToVerticalOffset(offset));}}else{Content=Ui.Panel(Ui.Text("Файлы сериала удалены. История просмотра сохранена. Вернитесь в библиотеку кнопкой «Назад».",20));}}finally{refreshing=false;}
     }
-    void Play(Episode? ep){if(ep!=null)Host.Play(series,ep);}
+    async void Play(Episode? ep){if(ep==null||!ep.Available){await Host.Notice("Локальный файл недоступен. Подключите диск или укажите другой файл через меню серии.");return;}Host.Play(series,ep);}
 }
 
 

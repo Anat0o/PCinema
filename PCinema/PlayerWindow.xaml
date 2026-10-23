@@ -1,4 +1,4 @@
-<local:Screen x:Class="PCinema.PlayerWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="clr-namespace:PCinema" xmlns:vlc="clr-namespace:LibVLCSharp.WPF;assembly=LibVLCSharp.WPF" Background="Black" Focusable="True">
+﻿<local:Screen x:Class="PCinema.PlayerWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="clr-namespace:PCinema" xmlns:vlc="clr-namespace:LibVLCSharp.WPF;assembly=LibVLCSharp.WPF" Background="Black" Focusable="True">
 <Grid><vlc:VideoView x:Name="Video">
 <Grid x:Name="Overlay" Focusable="True" TextElement.Foreground="White" TextElement.FontFamily="Segoe UI" TextElement.FontSize="14" Background="#01000000" MouseMove="Activity" MouseLeftButtonDown="VideoClick" MouseWheel="VideoWheel" PreviewKeyDown="OverlayKey">
 <Grid x:Name="Controls">
@@ -6,7 +6,7 @@
 <Grid VerticalAlignment="Top" Margin="28,20"><Button Style="{StaticResource IconButton}" Content="&#xE72B;" Click="NavigateBack" HorizontalAlignment="Left" Background="Transparent" ToolTip="Назад · Escape"/><StackPanel HorizontalAlignment="Center" MaxWidth="600"><TextBlock x:Name="EpisodeTitle" FontSize="18" FontWeight="SemiBold" TextAlignment="Center" TextTrimming="CharacterEllipsis"/><TextBlock x:Name="EpisodeNumber" Foreground="#CCCCCC" TextAlignment="Center" Margin="0,5,0,0"/></StackPanel></Grid>
 <Border VerticalAlignment="Bottom" Padding="28,50,28,20"><Border.Background><LinearGradientBrush StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#00000000" Offset="0"/><GradientStop Color="#EC000000" Offset="1"/></LinearGradientBrush></Border.Background>
 <StackPanel><Button x:Name="CancelAutoplayButton" Content="Отменить автоплей" Click="CancelAutoplay" Visibility="Collapsed" HorizontalAlignment="Left"/><TextBlock x:Name="PlayerStatus" Foreground="#C7C9CC" FontSize="12" TextTrimming="CharacterEllipsis" Margin="0,0,0,8"/>
-<Slider x:Name="Position" Minimum="0" Maximum="1" PreviewMouseLeftButtonDown="SeekStart" PreviewMouseLeftButtonUp="SeekEnd" ValueChanged="SeekChanged" ToolTip="Позиция воспроизведения"/>
+<Slider IsMoveToPointEnabled="True" x:Name="Position" Minimum="0" Maximum="1" PreviewMouseLeftButtonDown="SeekStart" PreviewMouseLeftButtonUp="SeekEnd" ValueChanged="SeekChanged" ToolTip="Позиция воспроизведения"/>
 <Grid Margin="0,8,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
 <StackPanel Orientation="Horizontal">
 <Button x:Name="PauseButton" Style="{StaticResource IconButton}" Content="&#xE768;" Click="Pause" Background="Transparent" ToolTip="Пауза · пробел"/>
@@ -27,6 +27,7 @@
 <DockPanel><Button DockPanel.Dock="Top" Content="Закрыть · Esc" Click="CloseMenu" HorizontalAlignment="Right"/>
 <ScrollViewer x:Name="TrackPanel" VerticalScrollBarVisibility="Auto"><StackPanel>
 <TextBlock Text="Звук и субтитры" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,16"/><TextBlock Text="Аудиодорожка"/><ComboBox x:Name="AudioTracks" SelectionChanged="AudioChanged"/><TextBlock Text="Субтитры" Margin="0,12,0,0"/><ComboBox x:Name="SubtitleTracks" SelectionChanged="SubtitleChanged"/><Button Content="Открыть SRT / ASS" Click="LoadSubtitle" Margin="0,12,0,18"/>
+<TextBlock Text="Декодирование видео"/><ComboBox x:Name="Decoding" SelectionChanged="DecodingChanged" Margin="0,6,0,14"/>
 <TextBlock Text="Оформление субтитров" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,12"/>
 <TextBlock Text="Размер"/><ComboBox x:Name="SubtitleSize" SelectionChanged="AppearanceChanged"/>
 <TextBlock Text="Шрифт"/><ComboBox x:Name="SubtitleFont" SelectionChanged="AppearanceChanged"/>

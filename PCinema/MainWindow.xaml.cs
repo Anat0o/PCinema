@@ -1,4 +1,4 @@
-﻿using System.Windows;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using Microsoft.Win32;
@@ -8,6 +8,12 @@ namespace PCinema;
 public partial class MainWindow : Window
 {
     readonly LibraryStore store = new();
+    public PlaybackSession Playback {get;}=new();
+    public ProgressWriter Progress {get;}
+    public bool AutoplayEnabled {get;private set;}=true;
+    bool shutdownPending,shutdownReady;
+    readonly DispatcherTimer responsiveness=new(){Interval=TimeSpan.FromMilliseconds(50)};
+    long lastPulse;
     readonly LibraryScanner scanner;
     readonly TmdbService tmdb;
     readonly LibraryViewModel vm;
@@ -20,19 +26,26 @@ public partial class MainWindow : Window
     public bool IsFullscreen { get; private set; }
     public MainWindow()
     {
-        InitializeComponent(); SourceInitialized+=(_,_)=>WindowBounds.Attach(this,()=>IsFullscreen); ContentRendered+=(_,_)=>{_=Task.Run(()=>PlaybackEngine.Prepare(SubtitleAppearance.Load(store).Options()));}; KeyboardNavigation.SetTabNavigation(ModalLayer,KeyboardNavigationMode.Cycle); tmdb=new(store); scanner=new(store); vm=new(store); DataContext=vm;
+        Progress=new(store.SaveProgress);Progress.Failed+=()=>Dispatcher.BeginInvoke(()=>{if(vm!=null)vm.Status="Не удалось сохранить историю просмотра.";}); InitializeComponent(); SourceInitialized+=(_,_)=>WindowBounds.Attach(this,()=>IsFullscreen); ContentRendered+=async(_,_)=>{try{var config=await Task.Run(()=>(Options:SubtitleAppearance.Load(store).Options(),Software:store.Setting("software_decoding")=="true",Auto:store.Setting("autoplay_next")!="false"));AutoplayEnabled=config.Auto;await Playback.PrepareAsync(config.Options,config.Software,0);}catch(Exception ex){_=Task.Run(()=>PerformanceLog.Write("player.warmup.failed",error:ex));}}; KeyboardNavigation.SetTabNavigation(ModalLayer,KeyboardNavigationMode.Cycle); tmdb=new(store); scanner=new(store); vm=new(store); DataContext=vm;
         scanner.Status += s => Dispatcher.BeginInvoke(() => { if(!closed) vm.Status=s; });
         scanner.Updated += () => Dispatcher.BeginInvoke(async () => { if(closed) return; await ReloadLibrary(); if(current is not PlayerWindow)current?.RefreshData(); _=Enrich(); });
         Loaded += async (_,_) => { await ReloadLibrary(); await scanner.ScanAsync(); _=Enrich(); reconcile.Start(); };
-        reconcile.Tick += async (_,_) => { await scanner.ScanAsync(); };
-        Closing += (_,_) => { current?.Leave(); };
-        Closed += (_,_) => { closed=true; cancelModal?.Invoke(); reconcile.Stop(); _=Task.Run(scanner.Dispose); tmdb.Dispose(); };
+        reconcile.Tick += async (_,_) => { await scanner.CheckSourcesAsync(); };
+        lastPulse=System.Diagnostics.Stopwatch.GetTimestamp();
+        responsiveness.Tick+=(_,_)=>{var now=System.Diagnostics.Stopwatch.GetTimestamp();var delay=System.Diagnostics.Stopwatch.GetElapsedTime(lastPulse,now).TotalMilliseconds-50;lastPulse=now;if(delay>50)_=Task.Run(()=>PerformanceLog.Write("ui.dispatch-delay",delay));};responsiveness.Start();
+        Closing+=async(_,e)=>
+        {
+            if(shutdownReady)return;e.Cancel=true;if(shutdownPending)return;shutdownPending=true;current?.Leave();
+            try{await Progress.FlushAsync();}catch{await Notice("Не удалось сохранить историю просмотра. Последние изменения могут быть потеряны.");}
+            await Playback.DisposeAsync();shutdownReady=true;Close();
+        };
+        Closed += (_,_) => { closed=true;responsiveness.Stop(); cancelModal?.Invoke(); reconcile.Stop(); _=Task.Run(scanner.Dispose); tmdb.Dispose(); };
     }
     public async Task ReloadLibrary()
     {
         if(refreshing || closed) return;
         refreshing=true;
-        try { var data=await Task.Run(() => { var loaded=store.LoadCatalog(); foreach(var s in loaded.OrderByDescending(x=>x.Id).Take(24)) LocalImageConverter.Load(s.Poster); var hero=loaded.Where(x=>x.State=="В процессе").OrderByDescending(x=>x.Episodes.Max(e=>e.LastPlayed)).FirstOrDefault() ?? loaded.OrderByDescending(x=>x.Id).FirstOrDefault(); LocalImageConverter.Load(hero?.Backdrop,1600); LocalImageConverter.Load(hero?.Logo,600); return loaded; }); if(!closed) vm.Reload(data); }
+        try { await Progress.DrainAsync(); var data=await Task.Run(store.LoadCatalog); if(!closed) vm.Reload(data); }
         finally { refreshing=false; }
     }
     async Task Enrich()
@@ -55,6 +68,7 @@ public partial class MainWindow : Window
         HomeButton.Style=(Style)FindResource(current==null ? "PrimaryButton" : typeof(Button));
         LibraryButton.ClearValue(Control.BackgroundProperty); LibraryButton.ClearValue(Control.BorderThicknessProperty);
         LibraryButton.Style=(Style)FindResource(current is LibraryScreen ? "PrimaryButton" : typeof(Button));
+        HistoryButton.ClearValue(Control.BackgroundProperty);HistoryButton.ClearValue(Control.BorderThicknessProperty);HistoryButton.Style=(Style)FindResource(current is HistoryScreen?"PrimaryButton":typeof(Button));
         if(current!=null) { Ui.Enter(current); current.Focus(); }
     }
     public void Back()
@@ -70,8 +84,10 @@ public partial class MainWindow : Window
     {
         cancelModal?.Invoke(); current?.Leave(); history.Clear(); current=null; Present(); Scroller.ScrollToTop(); _=ReloadLibrary();
     }
+    void GoHistory(object sender,RoutedEventArgs e){if(current is not HistoryScreen)Navigate(new HistoryScreen(this,store));}
     void GoLibrary(object sender,RoutedEventArgs e) { if(current is LibraryScreen) return; Navigate(new LibraryScreen(this,store)); }
     void Settings(object sender,RoutedEventArgs e) { if(current is SettingsWindow) return; Navigate(new SettingsWindow(this,store,tmdb)); }
+    public void SetAutoplay(bool value)=>AutoplayEnabled=value;
     public void SettingsChanged() { _=scanner.ScanAsync(); _=ReloadLibrary(); _=Enrich(); }
     async void AddFolder(object sender,RoutedEventArgs e)
     {

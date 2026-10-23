@@ -10,5 +10,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
 if (Test-Path -LiteralPath $publishDirectory) { Remove-Item -LiteralPath $publishDirectory -Recurse -Force }
 & $Dotnet publish "$PSScriptRoot\PCinema\PCinema.csproj" -c Release -r win-x64 --self-contained true -o "$PSScriptRoot\artifacts\publish"
 if ($LASTEXITCODE -ne 0) { throw 'Publish failed' }
+& $Dotnet run --project "$PSScriptRoot\tools\PerformanceProbe" -c Release -- --cache "$publishDirectory\libvlc\win-x64"
+if ($LASTEXITCODE -ne 0) { throw 'VLC plugin cache generation failed' }
 & $Iscc /Q "$PSScriptRoot\installer\PCinema.iss"
 if ($LASTEXITCODE -ne 0) { throw 'Installer build failed' }
