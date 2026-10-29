@@ -1,0 +1,6 @@
+{
+  "id": "example.my-module", "name": "Мой модуль", "author": "Your name",
+  "version": "1.0.0", "kind": "Feature", "apiVersion": 1,
+  "entryAssembly": "MyModule.dll", "entryType": "MyModule.Module",
+  "capabilities": ["Дополнительная страница"]
+}

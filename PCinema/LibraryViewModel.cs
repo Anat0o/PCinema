@@ -4,6 +4,7 @@ namespace PCinema;
 public sealed class LibraryViewModel(LibraryStore store) : Observable
 {
     public ObservableCollection<Series> All { get; } = []; public ObservableCollection<Series> Visible { get; } = []; public ObservableCollection<Series> Continuing { get; } = []; public ObservableCollection<Series> Recent { get; } = [];
+    public ObservableCollection<Series> Featured { get; } = [];
     string search = "", filter = "Все", status = "Ваша коллекция. Ваш ритм.";
     public string Search { get => search; set { search = value; Changed(); ApplyFilter(); } }
     public string Filter { get => filter; set { filter = value; Changed(); ApplyFilter(); } }
@@ -17,7 +18,7 @@ public sealed class LibraryViewModel(LibraryStore store) : Observable
         var old=All.ToDictionary(s=>s.Id);var merged=new List<Series>();
         foreach(var next in data??store.LoadCatalog()){if(old.TryGetValue(next.Id,out var existing)){existing.ApplyFrom(next);merged.Add(existing);}else merged.Add(next);}
         Sync(All,merged);Sync(Continuing,All.Where(x=>x.State=="В процессе").OrderByDescending(x=>x.Episodes.Max(e=>e.LastPlayed)).Take(24));
-        Sync(Recent,All.OrderByDescending(x=>x.Episodes.Max(e=>e.Id)).Take(12));ApplyFilter();
+        Sync(Recent,All.OrderByDescending(x=>x.Episodes.Max(e=>e.Id)).Take(12));Sync(Featured,All.OrderBy(x=>x.Title).Take(12));ApplyFilter();
         Changed(nameof(Hero));Changed(nameof(HeroTitle));Changed(nameof(HeroOverview));Changed(nameof(Empty));Changed(nameof(HeroAction));
     }
     static void Sync(ObservableCollection<Series> target,IEnumerable<Series> items)

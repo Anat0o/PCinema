@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework><UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+    <AssemblyName>MyModule</AssemblyName>
+    <SdkPath Condition="'$(SdkPath)' == ''">../../PCinema.ModuleApi/bin/Release/net10.0-windows/PCinema.ModuleApi.dll</SdkPath>
+  </PropertyGroup>
+  <ItemGroup><Reference Include="PCinema.ModuleApi"><HintPath>$(SdkPath)</HintPath><Private>false</Private></Reference></ItemGroup>
+</Project>

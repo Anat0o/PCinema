@@ -24,7 +24,7 @@ public sealed partial class LibraryStore
     {
         var removed=RemovedFiles();var all=Load();var result=new List<Series>();
         var excluded=Query("SELECT value FROM settings WHERE key LIKE 'excluded_source:%'",r=>r.GetString(0));var active=Folders();
-        bool Visible(Episode e)=>!removed.Contains(e.Id)&&(!excluded.Any(p=>UnderSource(e.Path,p))||active.Any(f=>UnderSource(e.Path,f.Path)));
+        bool Visible(Episode e)=>!string.IsNullOrEmpty(e.Path)&&!removed.Contains(e.Id)&&(!excluded.Any(p=>UnderSource(e.Path,p))||active.Any(f=>UnderSource(e.Path,f.Path)));
         if(includeRemoved)foreach(var ep in all.SelectMany(s=>s.Episodes))if(!Visible(ep))ep.Available=false;
         foreach(var group in all.GroupBy(s=>s.TmdbId.HasValue?$"tmdb:{s.TmdbId}":$"local:{s.Id}"))
         {

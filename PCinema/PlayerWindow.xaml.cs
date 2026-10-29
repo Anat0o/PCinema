@@ -29,7 +29,9 @@ public partial class PlayerWindow : Screen
         this.store=store;this.series=series;this.episode=episode;session=host.Playback;subtitles=new(store,false);
         seek=new((target,cancellation)=>SeekAsync(target,cancellation));
         InitializeComponent();_=InitializeAppearance();
-        Loaded+=(_,_)=>{if(!initialized){initialized=true;_=Start(episode);}};
+        Host.IsVisibleChanged+=HostVisibilityChanged;
+        Overlay.Loaded+=(_,_)=>SyncOverlayVisibility();
+        Loaded+=(_,_)=>{if(!initialized){initialized=true;InstallModuleControls();_=Start(episode);}};
         timer.Tick+=(_,_)=>Tick();Position.LostMouseCapture+=(_,_)=>CommitDrag();
         session.Ended+=MediaEnded;session.Error+=MediaError;
     }
@@ -39,7 +41,7 @@ public partial class PlayerWindow : Screen
         episode=ep;restored=false;ended=false;completionEligible=false;loading=true;shownAudio=shownSubtitles=null;lastSave=DateTime.UtcNow;
         owner=session.Begin();var openingOwner=owner;paused=resumePaused??false;resumePaused=null;
         Video.MediaPlayer=null;Overlay.Background=Brushes.Black;
-        EpisodeTitle.Text=series.Title;EpisodeNumber.Text=ep.Label;PlayerStatus.Text="Открываем файл…";
+        EpisodeTitle.Text=series.Title;EpisodeNumber.Text=ep.Label;PlayerStatus.Text="Открываем файл…";UpdatePauseInfo();_=LoadEpisodeDescription(ep,openingOwner);
         try
         {
             var preferences=await Task.Run(()=>(Options:SubtitleAppearance.Load(store).Options(),Software:store.Setting("software_decoding")=="true",Disabled:store.Setting("subtitles_disabled")=="true"));
@@ -84,9 +86,38 @@ public partial class PlayerWindow : Screen
         if(!ReferenceEquals(shownAudio,current.AudioTracks)){shownAudio=current.AudioTracks;AudioTracks.ItemsSource=shownAudio;AudioTracks.DisplayMemberPath="Name";AudioTracks.SelectedValuePath="Id";}
         if(!ReferenceEquals(shownSubtitles,current.SubtitleTracks)){shownSubtitles=current.SubtitleTracks;SubtitleTracks.ItemsSource=shownSubtitles;SubtitleTracks.DisplayMemberPath="Name";SubtitleTracks.SelectedValuePath="Id";}
         AudioTracks.SelectedValue=current.Audio;SubtitleTracks.SelectedValue=current.Subtitle;tracksUpdating=false;
+        Host.PublishPlayerState(episode.Id,!paused,state.Time,state.Length);
         if(DateTime.UtcNow-lastSave>=TimeSpan.FromSeconds(5))Save();
         if(current.Playing&&!paused&&!seeking&&MenuPanel.Visibility!=Visibility.Visible&&DateTime.UtcNow-lastActivity>TimeSpan.FromSeconds(3))SetControls(false);
-        if(paused||ended)SetControls(true);
+        if(paused||ended)SetControls(true);UpdatePauseVisibility();
+    }
+    void UpdatePauseInfo()
+    {
+        PauseTitle.Text=series.Title;PauseEpisode.Text=episode.Label+(string.IsNullOrWhiteSpace(episode.Title)?"":" · "+episode.Title);
+        PauseDescription.Text=string.IsNullOrWhiteSpace(episode.Overview)?series.Overview:episode.Overview;
+        _=LoadPauseArtwork();
+        UpdatePauseVisibility();
+    }
+    void UpdatePauseVisibility()
+    {
+        bool show=paused&&!Host.IsPictureInPicture&&!ended&&!loading&&!closing&&!seeking&&!seekPending&&MenuPanel.Visibility!=Visibility.Visible;
+        AnimatePause(show);
+    }
+    async Task LoadEpisodeDescription(Episode ep,long generation)
+    {
+        if(series.TmdbId==null||ep.Season==null||ep.Number==null||ep.Overview!=null)return;
+        var snapshot=new Series{Id=series.Id,TmdbId=series.TmdbId,Episodes=[new Episode{Id=ep.Id,Season=ep.Season,Number=ep.Number,Title=ep.Title}]};
+        try
+        {
+            var details=await Task.Run(async()=>
+            {
+                using var metadata=new TmdbService(store);await metadata.LoadEpisodes(snapshot);
+                var title=store.Query("SELECT title FROM episode_details WHERE episode_id=$id",r=>r.GetString(0),("$id",ep.Id)).FirstOrDefault();
+                return (Title:title,Overview:store.Setting($"episode_overview:{snapshot.TmdbId}:{ep.Season}:{ep.Number}"));
+            });
+            if(closing||owner!=generation)return;ep.Title=details.Title??ep.Title;ep.Overview=details.Overview;ep.NotifyUpdated();UpdatePauseInfo();
+        }
+        catch(Exception ex){_=Task.Run(()=>PerformanceLog.Write("episode.description.failed",error:ex));}
     }
     void ShowClock(long position)=>Clock.Text=$"{TimeSpan.FromMilliseconds(Math.Max(0,position)):hh\\:mm\\:ss} / {TimeSpan.FromMilliseconds(Math.Max(0,state.Length)):hh\\:mm\\:ss}";
     async Task SeekAsync(long target,CancellationToken cancellation)
@@ -115,15 +146,16 @@ public partial class PlayerWindow : Screen
     }
     public override void Leave()
     {
-        if(closing)return;Save();closing=true;seek.Cancel();seekRevision++;autoplay.Cancel();timer.Stop();
+        if(closing)return;Save();Host.ClearModulePlayer();Host.ExitPictureInPicture();closing=true;seek.Cancel();seekRevision++;autoplay.Cancel();timer.Stop();
+        pauseArtworkCancellation?.Cancel();Host.IsVisibleChanged-=HostVisibilityChanged;
         session.Ended-=MediaEnded;session.Error-=MediaError;Video.MediaPlayer=null;_=session.CloseAsync(owner);
         if(Host.IsFullscreen)Host.ToggleFullscreen();
     }
     async void Command(Action<LibVLCSharp.Shared.MediaPlayer> action)
     {if(loading||closing)return;try{await session.CommandAsync(owner,action);}catch(Exception ex){_=Task.Run(()=>PerformanceLog.Write("player.command.failed",error:ex));}}
-    void SetControls(bool show){if(controlsVisible==show)return;controlsVisible=show;Controls.IsHitTestVisible=show;Controls.BeginAnimation(OpacityProperty,new DoubleAnimation(show?1:0,TimeSpan.FromMilliseconds(160)));Overlay.Cursor=show?Cursors.Arrow:Cursors.None;}
+    void SetControls(bool show){if(controlsVisible==show)return;controlsVisible=show;Controls.IsHitTestVisible=show;Controls.BeginAnimation(OpacityProperty,new DoubleAnimation(show?1:0,TimeSpan.FromMilliseconds(SystemParameters.ClientAreaAnimation?160:0)));Overlay.Cursor=show?Cursors.Arrow:Cursors.None;}
     void Activity(object sender,MouseEventArgs e){lastActivity=DateTime.UtcNow;SetControls(true);}
-    void SetPaused(bool value){paused=value;Command(p=>p.SetPause(value));PauseButton.Content=value?"\uE768":"\uE769";Save();lastActivity=DateTime.UtcNow;SetControls(true);}
+    void SetPaused(bool value){paused=value;UpdatePauseInfo();Command(p=>p.SetPause(value));PauseButton.Content=value?"\uE768":"\uE769";Save();lastActivity=DateTime.UtcNow;SetControls(true);}
     void Pause(object sender,RoutedEventArgs e){if(loading)return;if(ended){episode.Position=0;resumePaused=false;_=Start(episode);return;}SetPaused(!paused);}
     void CancelAutoplay(object sender,RoutedEventArgs e){autoplay.Cancel();CancelAutoplayButton.Visibility=Visibility.Collapsed;PlayerStatus.Text="Автоплей отменён.";}
     bool OverControl(DependencyObject? element){while(element!=null&&element!=Overlay){if(element==MenuPanel||element is ButtonBase or Slider or ComboBox or TextBox or ListBox)return true;element=element is Visual or System.Windows.Media.Media3D.Visual3D?VisualTreeHelper.GetParent(element):LogicalTreeHelper.GetParent(element);}return false;}
@@ -153,16 +185,26 @@ public partial class PlayerWindow : Screen
         if(closing)return;
         Decoding.ItemsSource=new[]{"Автоматически","Программное"};Decoding.SelectedIndex=config.Software?1:0;
         var value=config.Appearance;
-        SubtitleSize.ItemsSource=new[]{"Маленький","Обычный","Крупный","Очень крупный"};SubtitleSize.SelectedIndex=Array.IndexOf(SubtitleAppearance.Sizes,value.Size);
+        SubtitleSize.Text=value.EffectivePixelSize.ToString();SubtitleSizeSlider.Value=value.EffectivePixelSize;
         SubtitleFont.ItemsSource=SubtitleAppearance.Fonts;SubtitleFont.SelectedItem=value.Font;
-        SubtitleColor.ItemsSource=new[]{"Белый","Жёлтый","Голубой"};SubtitleColor.SelectedIndex=Array.IndexOf(SubtitleAppearance.Colors,value.Color);
+        SubtitleColor.Text="#"+value.Color;BuildPalette();
         SubtitleStyle.ItemsSource=SubtitleAppearance.Styles;SubtitleStyle.SelectedItem=value.Style;SubtitleBold.IsChecked=value.Bold;appearanceReady=true;UpdatePreview();
     }
-    SubtitleAppearance SelectedAppearance()=>new(SubtitleAppearance.Sizes[Math.Max(0,SubtitleSize.SelectedIndex)],SubtitleFont.SelectedItem as string??"Segoe UI",SubtitleAppearance.Colors[Math.Max(0,SubtitleColor.SelectedIndex)],SubtitleStyle.SelectedItem as string??"Обводка",SubtitleBold.IsChecked==true);
+    void BuildPalette()
+    {
+        foreach(var hex in new[]{"FFFFFF","E5E7EB","A6A9AF","6B7280","374151","1F2937","111827","000000","FFF1F2","FECDD3","FDA4AF","FB7185","F43F5E","E11D48","BE123C","881337","FEF9C3","FEF08A","FFE066","FACC15","FB923C","F97316","EA580C","9A3412","DCFCE7","BBF7D0","86EFAC","4ADE80","22C55E","16A34A","15803D","14532D","E0F2FE","BAE6FD","80E5FF","38BDF8","0EA5E9","2563EB","1D4ED8","1E3A8A","F3E8FF","E9D5FF","D8B4FE","C084FC","A855F7","9333EA","7E22CE","581C87"})
+        {
+            var swatch=new Button{Width=30,Height=28,Padding=new Thickness(0),Margin=new Thickness(2),Tag=hex,ToolTip="#"+hex,Background=(Brush)new BrushConverter().ConvertFromString("#"+hex)!,BorderThickness=new Thickness(2)};
+            swatch.Click+=(_,_)=>SubtitleColor.Text="#"+hex;SubtitlePalette.Children.Add(swatch);
+        }
+    }
+    void SizeTextChanged(object sender,TextChangedEventArgs e){if(!appearanceReady)return;if(int.TryParse(SubtitleSize.Text,out int size)&&size>=12&&size<=160)SubtitleSizeSlider.Value=size;UpdatePreview();}
+    void SizeSliderChanged(object sender,RoutedPropertyChangedEventArgs<double> e){if(!appearanceReady)return;SubtitleSize.Text=((int)e.NewValue).ToString();}
+    SubtitleAppearance SelectedAppearance()=>new SubtitleAppearance(16,SubtitleFont.SelectedItem as string??"Segoe UI",SubtitleColor.Text,SubtitleStyle.SelectedItem as string??"Обводка",SubtitleBold.IsChecked==true,int.TryParse(SubtitleSize.Text,out int size)?size:68).Normalize();
     void AppearanceChanged(object sender,RoutedEventArgs e){if(appearanceReady)UpdatePreview();}
     void UpdatePreview()
     {
-        var a=SelectedAppearance();SubtitlePreview.FontFamily=new FontFamily(a.Font);SubtitlePreview.FontSize=320.0/a.Size;SubtitlePreview.Foreground=(Brush)new BrushConverter().ConvertFromString("#"+a.Color)!;SubtitlePreview.FontWeight=a.Bold?FontWeights.Bold:FontWeights.Normal;
+        var a=SelectedAppearance();foreach(Button swatch in SubtitlePalette.Children){bool selected=(string)swatch.Tag==a.Color;swatch.BorderBrush=selected?Brushes.White:Brushes.Transparent;swatch.Content=selected?"✓":"";var color=((SolidColorBrush)swatch.Background).Color;swatch.Foreground=color.R*.299+color.G*.587+color.B*.114>150?Brushes.Black:Brushes.White;}SubtitlePreview.FontFamily=new FontFamily(a.Font);SubtitlePreview.FontSize=Math.Clamp(a.EffectivePixelSize*0.5,8,56);SubtitlePreview.Foreground=(Brush)new BrushConverter().ConvertFromString("#"+a.Color)!;SubtitlePreview.FontWeight=a.Bold?FontWeights.Bold:FontWeights.Normal;
         SubtitlePreviewBackground.Background=new SolidColorBrush(Color.FromArgb((byte)(a.Style=="Тёмный фон"?180:40),0,0,0));
     }
     async void DecodingChanged(object sender,SelectionChangedEventArgs e)
@@ -174,16 +216,45 @@ public partial class PlayerWindow : Screen
     }
     async void ApplyAppearance(object sender,RoutedEventArgs e)
     {
-        if(loading||closing)return;var appearance=SelectedAppearance();Save();resumePaused=paused;resumeAudio=state.Audio;resumeSubtitle=externalSubtitle==null?state.Subtitle:null;resumeMuted=state.Muted;
+        if(loading||closing)return;if(!int.TryParse(SubtitleSize.Text,out int size)||size<12||size>160||!SubtitleAppearance.ValidColor(SubtitleColor.Text)){PlayerStatus.Text="Укажите размер 12–160 и цвет #RRGGBB.";return;}var appearance=SelectedAppearance();Save();resumePaused=paused;resumeAudio=state.Audio;resumeSubtitle=externalSubtitle==null?state.Subtitle:null;resumeMuted=state.Muted;
         await Task.Run(()=>appearance.Save(store));if(!closing)await Start(episode);
     }
     void NavigateBack(object sender,RoutedEventArgs e)=>Host.Back();
     void Fullscreen(object sender,RoutedEventArgs e)=>Host.ToggleFullscreen();
+    void PictureInPicture(object sender,RoutedEventArgs e)=>Host.TogglePictureInPicture();
+    public void PauseForTray(){if(!ended&&!closing)SetPaused(true);}
+    void HostVisibilityChanged(object sender,DependencyPropertyChangedEventArgs e)=>SyncOverlayVisibility();
+    void SyncOverlayVisibility()
+    {
+        // VideoView hosts its controls in a separate transparent WPF window.
+        // Hiding the main window alone does not hide that window reliably.
+        bool visible=Host.IsVisible&&!closing;
+        Overlay.Visibility=visible?Visibility.Visible:Visibility.Collapsed;
+        var overlayWindow=Window.GetWindow(Overlay);
+        if(overlayWindow==null||ReferenceEquals(overlayWindow,Host))return;
+        if(!visible)overlayWindow.Hide();
+        else if(Overlay.IsLoaded&&!overlayWindow.IsVisible)overlayWindow.Show();
+    }
+    public void SetCompact(bool compact)
+    {
+        SetModuleCompact(compact);
+        ClosePanel();foreach(var element in new FrameworkElement[]{TopHeader,RewindButton,ForwardButton,MuteButton,VolumeSlider,Clock,NextButton,EpisodesButton,TracksButton})element.Visibility=compact?Visibility.Collapsed:Visibility.Visible;
+        BottomControls.Padding=compact?new Thickness(10,20,10,5):new Thickness(28,50,28,20);PipButton.ToolTip=compact?"Вернуться в обычное окно · P":"Картинка в картинке · P";UpdatePauseVisibility();SetControls(true);
+    }
     void OverlayKey(object sender,KeyEventArgs e){if(e.Key==Key.Escape){Host.Back();e.Handled=true;}else HandleKey(e);}
     public void HandleKey(KeyEventArgs e)
     {
-        if(e.Handled||e.OriginalSource is TextBox||e.OriginalSource is ComboBox)return;
-        switch(e.Key){case Key.Space:Pause(this,e);break;case Key.Left:Jump(-10000);break;case Key.Right:Jump(10000);break;case Key.F:Host.ToggleFullscreen();break;default:return;}e.Handled=true;
+        if(e.Handled)return;
+        // Intercept Space before a focused transport button can activate itself.
+        // Leave editing and menu controls with their normal keyboard behavior.
+        if(e.Key==Key.Space&&!MenuPanel.IsKeyboardFocusWithin&&e.OriginalSource is not TextBoxBase and not ComboBox)
+        {
+            e.Handled=true;
+            if(!e.IsRepeat)Pause(this,e);
+            return;
+        }
+        if(e.OriginalSource is TextBoxBase or ComboBox or Slider or ButtonBase)return;
+        switch(e.Key){case Key.Space:Pause(this,e);break;case Key.Left:Jump(-10000);break;case Key.Right:Jump(10000);break;case Key.F:Host.ToggleFullscreen();break;case Key.P:Host.TogglePictureInPicture();break;default:return;}e.Handled=true;
     }
     Episode? NextEpisode(){int index=series.Episodes.FindIndex(e=>e.Id==episode.Id);return series.Episodes.Skip(index+1).FirstOrDefault(e=>e.Available);}
     void Next(object sender,RoutedEventArgs e){var next=NextEpisode();if(next!=null)Switch(next);}
@@ -194,5 +265,3 @@ public partial class PlayerWindow : Screen
     void CloseMenu(object sender,RoutedEventArgs e)=>ClosePanel();
     public bool ClosePanel(){if(MenuPanel.Visibility!=Visibility.Visible)return false;MenuPanel.Visibility=Visibility.Collapsed;lastActivity=DateTime.UtcNow;return true;}
 }
-
-

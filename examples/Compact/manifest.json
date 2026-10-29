@@ -1,0 +1,1 @@
+{"id":"pcinema.compact","name":"Compact","author":"PCinema","version":"1.0.0","kind":"Skin","apiVersion":1,"entryAssembly":"Compact.dll","entryType":"PCinema.Examples.CompactModule","capabilities":["Оболочка и страницы","Управление плеером"]}

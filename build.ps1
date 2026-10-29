@@ -14,3 +14,6 @@ if ($LASTEXITCODE -ne 0) { throw 'Publish failed' }
 if ($LASTEXITCODE -ne 0) { throw 'VLC plugin cache generation failed' }
 & $Iscc /Q "$PSScriptRoot\installer\PCinema.iss"
 if ($LASTEXITCODE -ne 0) { throw 'Installer build failed' }
+
+& "$PSScriptRoot/build-modules.ps1" -Dotnet $Dotnet
+& "$PSScriptRoot/build-sdk.ps1" -Dotnet $Dotnet

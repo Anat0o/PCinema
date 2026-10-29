@@ -1,0 +1,1 @@
+{"id":"pcinema.sleep-timer","name":"Таймер сна","author":"PCinema","version":"1.0.0","kind":"Feature","apiVersion":1,"entryAssembly":"SleepTimer.dll","entryType":"PCinema.Examples.SleepTimerModule","capabilities":["Фоновый таймер","Пауза воспроизведения","Собственные настройки"]}

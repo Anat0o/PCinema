@@ -1,0 +1,26 @@
+<local:Screen x:Class="PCinema.HistoryScreen" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="clr-namespace:PCinema">
+<Grid Margin="32,72,32,24">
+<Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+<Grid Margin="0,0,0,20">
+<Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+<StackPanel VerticalAlignment="Center"><TextBlock Text="История просмотра" FontSize="32" FontWeight="SemiBold"/><TextBlock x:Name="Status" Text="Загружаем историю…" Foreground="#999DA5" Margin="0,10,0,0"/></StackPanel>
+<TextBox x:Name="Search" Grid.Column="1" Width="240" VerticalAlignment="Center" Visibility="Collapsed" ToolTip="Поиск по названию" TextChanged="SearchChanged"/>
+<Button x:Name="SearchButton" Grid.Column="2" Style="{StaticResource IconButton}" Content="&#xE721;" VerticalAlignment="Center" ToolTip="Поиск в истории" AutomationProperties.Name="Поиск в истории" Click="ToggleSearch"/>
+</Grid>
+<TextBlock x:Name="Empty" Grid.Row="1" Visibility="Collapsed" Text="Здесь появятся сериалы, которые вы начали смотреть." Foreground="{DynamicResource App.Muted}" Margin="0,6,0,20"/>
+<Border Grid.Row="2" BorderBrush="{DynamicResource App.Border}" BorderThickness="1" CornerRadius="14" Background="{DynamicResource App.Panel}" Padding="1" ClipToBounds="True">
+<DataGrid x:Name="HistoryTable" Background="Transparent" Foreground="{DynamicResource App.Text}" BorderThickness="0" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" CanUserDeleteRows="False" CanUserReorderColumns="False" CanUserSortColumns="False" CanUserResizeRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#2B2D32" RowHeaderWidth="0" RowBackground="Transparent" AlternatingRowBackground="#08FFFFFF" SelectionMode="Single" EnableRowVirtualization="True" ScrollViewer.HorizontalScrollBarVisibility="Disabled" MinRowHeight="64">
+<DataGrid.Resources>
+<Style TargetType="DataGridColumnHeader"><Setter Property="Background" Value="#202227"/><Setter Property="Foreground" Value="#CBCDD2"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Padding" Value="18,16"/><Setter Property="BorderThickness" Value="0,0,0,1"/><Setter Property="BorderBrush" Value="#34363C"/></Style>
+<Style TargetType="DataGridRow"><Setter Property="Background" Value="Transparent"/><Setter Property="BorderThickness" Value="0"/><Style.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="#15FFFFFF"/></Trigger><Trigger Property="IsSelected" Value="True"><Setter Property="Background" Value="#22FFFFFF"/></Trigger></Style.Triggers></Style>
+<Style TargetType="DataGridCell"><Setter Property="Padding" Value="18,12"/><Setter Property="BorderThickness" Value="0"/><Setter Property="Background" Value="Transparent"/><Setter Property="Foreground" Value="{DynamicResource App.Text}"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="DataGridCell"><Border Padding="{TemplateBinding Padding}" Background="{TemplateBinding Background}"><ContentPresenter VerticalAlignment="Center"/></Border></ControlTemplate></Setter.Value></Setter></Style>
+</DataGrid.Resources>
+<DataGrid.Columns>
+<DataGridTextColumn Header="Дата" Binding="{Binding DateLabel}" Width="128"><DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="Foreground" Value="#A6A9AF"/><Setter Property="VerticalAlignment" Value="Center"/></Style></DataGridTextColumn.ElementStyle></DataGridTextColumn>
+<DataGridTemplateColumn Header="Название" Width="*"><DataGridTemplateColumn.CellTemplate><DataTemplate><Button Click="OpenTitle" Background="Transparent" BorderThickness="0" Margin="0" Padding="0" HorizontalContentAlignment="Left" ToolTip="Открыть страницу сериала"><TextBlock Text="{Binding DisplayTitle}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap"/></Button></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+<DataGridTemplateColumn Header="Последняя серия" Width="*"><DataGridTemplateColumn.CellTemplate><DataTemplate><StackPanel><TextBlock Text="{Binding EpisodeLabel}" TextWrapping="Wrap" Foreground="#D1D3D7"/><TextBlock Text="{Binding Summary}" TextWrapping="Wrap" Foreground="#969BA4" FontSize="12" Margin="0,6,0,0"/></StackPanel></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+</DataGrid.Columns>
+</DataGrid>
+</Border>
+</Grid>
+</local:Screen>

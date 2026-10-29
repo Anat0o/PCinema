@@ -77,17 +77,32 @@ public sealed partial class TmdbService : IDisposable
     public async Task LoadEpisodes(Series series)
     {
         if(!Connected || series.TmdbId==null) return;
-        foreach(var group in series.Episodes.Where(e=>e.Season.HasValue&&e.Number.HasValue&&e.Title==null).GroupBy(e=>e.Season!.Value))
+        foreach(var group in series.Episodes.Where(e=>e.Season.HasValue&&e.Number.HasValue&&(e.Title==null||e.Overview==null)).GroupBy(e=>e.Season!.Value))
         {
             using var doc=await Get($"tv/{series.TmdbId}/season/{group.Key}?language=ru-RU");
             if(!doc.RootElement.TryGetProperty("episodes",out var list)) continue;
+            JsonDocument? english=null;
+            try
+            {
+                if(list.EnumerateArray().Any(e=>group.Any(local=>local.Number==e.GetProperty("episode_number").GetInt32())&&string.IsNullOrWhiteSpace(Str(e,"overview"))))
+                {
+                    try{english=await Get($"tv/{series.TmdbId}/season/{group.Key}?language=en-US");}catch(HttpRequestException){}catch(TaskCanceledException){}
+                }
             foreach(var item in list.EnumerateArray())
             {
                 var n=item.GetProperty("episode_number").GetInt32();
                 var local=group.Where(e=>e.Number==n).ToList();if(local.Count==0)continue;
+                var overview=Str(item,"overview");var title=Str(item,"name");
+                if(english!=null&&english.RootElement.TryGetProperty("episodes",out var fallback))
+                {
+                    var en=fallback.EnumerateArray().FirstOrDefault(e=>e.GetProperty("episode_number").GetInt32()==n);
+                    if(en.ValueKind==JsonValueKind.Object){if(string.IsNullOrWhiteSpace(overview))overview=Str(en,"overview");if(string.IsNullOrWhiteSpace(title))title=Str(en,"name");}
+                }
+                store.Setting($"episode_overview:{series.TmdbId}:{group.Key}:{n}",overview);
                 var still=await OptionalCache(Str(item,"still_path"),"w300");
-                foreach(var ep in local) store.Execute("INSERT INTO episode_details(episode_id,title,still) VALUES($i,$t,$s) ON CONFLICT(episode_id) DO UPDATE SET title=$t,still=$s",("$i",ep.Id),("$t",Str(item,"name")),("$s",still));
+                foreach(var ep in local) store.Execute("INSERT INTO episode_details(episode_id,title,still) VALUES($i,$t,$s) ON CONFLICT(episode_id) DO UPDATE SET title=$t,still=$s",("$i",ep.Id),("$t",title),("$s",still));
             }
+            }finally{english?.Dispose();}
         }
     }
     async Task<string?> OptionalCache(string? path,string size)

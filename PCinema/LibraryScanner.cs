@@ -48,7 +48,7 @@ public sealed class LibraryScanner(LibraryStore store, Func<string,FilePresence>
             await Task.Run(async () =>
             {
                 Watch();
-                var existing = store.Query("SELECT id,path,available FROM episodes",r=>new Episode{Id=r.GetInt64(0),Path=r.GetString(1),Available=r.GetBoolean(2)});
+                var existing = store.Query("SELECT id,path,available FROM episodes WHERE path IS NOT NULL AND path<>''",r=>new Episode{Id=r.GetInt64(0),Path=r.GetString(1),Available=r.GetBoolean(2)});
                 var removed=store.RemovedFiles();
                 var known = existing.Select(e => e.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
                 foreach (var ep in existing.Where(e=>changes==null||changes.Any(p=>Within(e.Path,p))))

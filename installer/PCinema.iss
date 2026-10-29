@@ -1,5 +1,5 @@
-﻿#define MyAppName "PCinema"
-#define MyAppVersion "1.2.0"
+#define MyAppName "PCinema"
+#define MyAppVersion "1.0.0"
 #ifndef PublishDir
   #define PublishDir "..\artifacts\publish"
 #endif
@@ -14,7 +14,7 @@ MinVersion=10.0.22000
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\artifacts
-OutputBaseFilename=PCinema-Setup-1.2.0
+OutputBaseFilename=PCinema-Setup-1.0.0
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

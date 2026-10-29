@@ -24,9 +24,9 @@ public partial class MainWindow : Window
     bool metadataBusy, closed, refreshing;
     Rect previousBounds; WindowState previousState; bool previousTopmost; System.Windows.Shell.WindowChrome? previousChrome;
     public bool IsFullscreen { get; private set; }
-    public MainWindow()
+    public MainWindow(bool safeMode=false)
     {
-        Progress=new(store.SaveProgress);Progress.Failed+=()=>Dispatcher.BeginInvoke(()=>{if(vm!=null)vm.Status="Не удалось сохранить историю просмотра.";}); InitializeComponent(); SourceInitialized+=(_,_)=>WindowBounds.Attach(this,()=>IsFullscreen); ContentRendered+=async(_,_)=>{try{var config=await Task.Run(()=>(Options:SubtitleAppearance.Load(store).Options(),Software:store.Setting("software_decoding")=="true",Auto:store.Setting("autoplay_next")!="false"));AutoplayEnabled=config.Auto;await Playback.PrepareAsync(config.Options,config.Software,0);}catch(Exception ex){_=Task.Run(()=>PerformanceLog.Write("player.warmup.failed",error:ex));}}; KeyboardNavigation.SetTabNavigation(ModalLayer,KeyboardNavigationMode.Cycle); tmdb=new(store); scanner=new(store); vm=new(store); DataContext=vm;
+        Progress=new(store.SaveProgress);Progress.Failed+=()=>Dispatcher.BeginInvoke(()=>{if(vm!=null)vm.Status="Не удалось сохранить историю просмотра.";}); InitializeComponent(); Modules=new(this,safeMode); ContentRendered+=async(_,_)=>await Modules.StartAsync(); SourceInitialized+=(_,_)=>WindowBounds.Attach(this,()=>IsFullscreen); ContentRendered+=async(_,_)=>{try{var config=await Task.Run(()=>(Options:SubtitleAppearance.Load(store).Options(),Software:store.Setting("software_decoding")=="true",Auto:store.Setting("autoplay_next")!="false",Tray:store.Setting("close_to_tray")=="true"));AutoplayEnabled=config.Auto;closeToTray=config.Tray;await Playback.PrepareAsync(config.Options,config.Software,0);}catch(Exception ex){_=Task.Run(()=>PerformanceLog.Write("player.warmup.failed",error:ex));}}; KeyboardNavigation.SetTabNavigation(ModalLayer,KeyboardNavigationMode.Cycle); tmdb=new(store); scanner=new(store); vm=new(store); DataContext=vm; InitializeCloudSync();
         scanner.Status += s => Dispatcher.BeginInvoke(() => { if(!closed) vm.Status=s; });
         scanner.Updated += () => Dispatcher.BeginInvoke(async () => { if(closed) return; await ReloadLibrary(); if(current is not PlayerWindow)current?.RefreshData(); _=Enrich(); });
         Loaded += async (_,_) => { await ReloadLibrary(); await scanner.ScanAsync(); _=Enrich(); reconcile.Start(); };
@@ -35,17 +35,17 @@ public partial class MainWindow : Window
         responsiveness.Tick+=(_,_)=>{var now=System.Diagnostics.Stopwatch.GetTimestamp();var delay=System.Diagnostics.Stopwatch.GetElapsedTime(lastPulse,now).TotalMilliseconds-50;lastPulse=now;if(delay>50)_=Task.Run(()=>PerformanceLog.Write("ui.dispatch-delay",delay));};responsiveness.Start();
         Closing+=async(_,e)=>
         {
-            if(shutdownReady)return;e.Cancel=true;if(shutdownPending)return;shutdownPending=true;current?.Leave();
-            try{await Progress.FlushAsync();}catch{await Notice("Не удалось сохранить историю просмотра. Последние изменения могут быть потеряны.");}
-            await Playback.DisposeAsync();shutdownReady=true;Close();
+            if(shutdownReady)return;e.Cancel=true;if(!exitRequested&&closeToTray&&!shutdownPending&&HideToTray())return;if(shutdownPending)return;shutdownPending=true;current?.Leave();
+            try{await preferenceWrites.DrainAsync();await Progress.FlushAsync();}catch{await Notice("Не удалось сохранить историю просмотра. Последние изменения могут быть потеряны.");}
+            await CloudSync.StopAsync();await Modules.StopAsync();await Progress.FlushAsync();await Playback.DisposeAsync();((App)Application.Current).CleanExit=true;((App)Application.Current).RestartRequested=restartModules;shutdownReady=true;Close();
         };
-        Closed += (_,_) => { closed=true;responsiveness.Stop(); cancelModal?.Invoke(); reconcile.Stop(); _=Task.Run(scanner.Dispose); tmdb.Dispose(); };
+        Closed += (_,_) => { closed=true;tray?.Dispose();responsiveness.Stop(); cancelModal?.Invoke(); reconcile.Stop(); _=Task.Run(scanner.Dispose); tmdb.Dispose(); };
     }
     public async Task ReloadLibrary()
     {
         if(refreshing || closed) return;
         refreshing=true;
-        try { await Progress.DrainAsync(); var data=await Task.Run(store.LoadCatalog); if(!closed) vm.Reload(data); }
+        try { await Progress.DrainAsync(); var data=await Task.Run(store.LoadCatalog); if(!closed) vm.Reload(data); Modules?.Publish(new("library.changed")); }
         finally { refreshing=false; }
     }
     async Task Enrich()
@@ -57,24 +57,30 @@ public partial class MainWindow : Window
     }
     public void Navigate(Screen screen)
     {
+        if(current is PlayerWindow){current.Leave();current=null;}
         history.Push(current); current=screen; Present();
     }
     void Present()
     {
-        PageHost.Content=current; PageHost.Visibility=current==null ? Visibility.Collapsed : Visibility.Visible;
-        Scroller.Visibility=current==null ? Visibility.Visible : Visibility.Collapsed;
+        PageHost.Content=current!=null&&presentations.TryGetValue(current,out var themed)?themed:current; PageHost.Visibility=current==null ? Visibility.Collapsed : Visibility.Visible;
+        HomeHost.Visibility=current==null ? Visibility.Visible : Visibility.Collapsed;
         Navigation.Visibility=current is PlayerWindow ? Visibility.Collapsed : Visibility.Visible;
         BackButton.Visibility=history.Count>0 ? Visibility.Visible : Visibility.Collapsed;
-        HomeButton.Style=(Style)FindResource(current==null ? "PrimaryButton" : typeof(Button));
-        LibraryButton.ClearValue(Control.BackgroundProperty); LibraryButton.ClearValue(Control.BorderThicknessProperty);
-        LibraryButton.Style=(Style)FindResource(current is LibraryScreen ? "PrimaryButton" : typeof(Button));
-        HistoryButton.ClearValue(Control.BackgroundProperty);HistoryButton.ClearValue(Control.BorderThicknessProperty);HistoryButton.Style=(Style)FindResource(current is HistoryScreen?"PrimaryButton":typeof(Button));
+        HomeButton.Tag=current==null ? "Active" : null;
+        LibraryButton.Tag=current is LibraryScreen or SeriesWindow ? "Active" : null;
+        HistoryButton.Tag=current is HistoryScreen ? "Active" : null;
+        var account=current is SettingsScreen {Section:"Аккаунт и синхронизация"};
+        SettingsButton.Tag=current is SettingsScreen && !account ? "Active" : null;
+        AccountButton.Tag=account ? "Active" : null;
+        ApplyModulePresentation();
+        if(deferredCloud&&current is not PlayerWindow)_=ApplyCloudPreferences();
         if(current!=null) { Ui.Enter(current); current.Focus(); }
     }
     public void Back()
     {
         if(cancelModal!=null) { cancelModal(); return; }
         if(current is PlayerWindow p && p.ClosePanel()) return;
+        if(IsPictureInPicture){ExitPictureInPicture();return;}
         if(IsFullscreen) { ToggleFullscreen(); return; }
         if(history.Count==0) return;
         current?.Leave(); current=history.Pop(); Present(); current?.RefreshData(); _=ReloadLibrary();
@@ -86,7 +92,9 @@ public partial class MainWindow : Window
     }
     void GoHistory(object sender,RoutedEventArgs e){if(current is not HistoryScreen)Navigate(new HistoryScreen(this,store));}
     void GoLibrary(object sender,RoutedEventArgs e) { if(current is LibraryScreen) return; Navigate(new LibraryScreen(this,store)); }
-    void Settings(object sender,RoutedEventArgs e) { if(current is SettingsWindow) return; Navigate(new SettingsWindow(this,store,tmdb)); }
+    void AccountSettings(object sender,RoutedEventArgs e)=>OpenSettings("Аккаунт и синхронизация");
+    void Settings(object sender,RoutedEventArgs e) => OpenSettings();
+    public void OpenSettings(string section="Общие",string? moduleOwner=null,string? modulePage=null)=>Navigate(new SettingsScreen(this,store,tmdb,section,moduleOwner,modulePage));
     public void SetAutoplay(bool value)=>AutoplayEnabled=value;
     public void SettingsChanged() { _=scanner.ScanAsync(); _=ReloadLibrary(); _=Enrich(); }
     async void AddFolder(object sender,RoutedEventArgs e)
@@ -107,16 +115,18 @@ public partial class MainWindow : Window
     }
     public void ToggleFullscreen()
     {
+        if(IsPictureInPicture)ExitPictureInPicture();
         if(!IsFullscreen) { previousBounds=WindowState==WindowState.Normal ? new Rect(Left,Top,ActualWidth,ActualHeight) : RestoreBounds; previousState=WindowState; previousTopmost=Topmost; previousChrome=System.Windows.Shell.WindowChrome.GetWindowChrome(this); IsFullscreen=true; WindowState=WindowState.Normal; System.Windows.Shell.WindowChrome.SetWindowChrome(this,null); ChromeRow.Height=new(0); Topmost=true; WindowState=WindowState.Maximized; IsFullscreen=true; }
         else { IsFullscreen=false; WindowState=WindowState.Normal; System.Windows.Shell.WindowChrome.SetWindowChrome(this,previousChrome); ChromeRow.Height=new(32); Topmost=previousTopmost; if(!previousBounds.IsEmpty){Left=previousBounds.Left;Top=previousBounds.Top;Width=previousBounds.Width;Height=previousBounds.Height;} WindowState=previousState; IsFullscreen=false; }
     }
     void KeyPressed(object sender,KeyEventArgs e)
     {
+        if(e.Key==Key.M && Keyboard.Modifiers==(ModifierKeys.Control|ModifierKeys.Shift)){OpenModules(this,new());e.Handled=true;return;}
         if(e.Key==Key.Escape) { Back(); e.Handled=true; }
         else if(current is PlayerWindow p && cancelModal==null) p.HandleKey(e);
     }
     void MinimizeWindow(object sender,RoutedEventArgs e)=>WindowState=WindowState.Minimized;
-    void MaximizeWindow(object sender,RoutedEventArgs e)=>WindowState=WindowState==WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+    void MaximizeWindow(object sender,RoutedEventArgs e){if(IsPictureInPicture){ExitPictureInPicture();return;}WindowState=WindowState==WindowState.Maximized?WindowState.Normal:WindowState.Maximized;}
     void CloseWindow(object sender,RoutedEventArgs e)=>Close();
     void DismissModal(object sender,RoutedEventArgs e)=>cancelModal?.Invoke();
     Task<T?> Modal<T>(FrameworkElement content,Action<Action<T?>> connect)

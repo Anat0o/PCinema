@@ -5,6 +5,13 @@ using Xunit;
 namespace PCinema.Tests;
 public sealed class HistoryCoverageTests
 {
+    [Fact] public void HistoryShowsLatestWatchedEpisodePerTitleWithoutDiscardingOtherProgress()
+    {
+        var first=new Episode{Id=1,Season=1,Number=8,Position=8000,LastPlayed="2026-10-22T12:00:00Z"};
+        var latest=new Episode{Id=2,Season=1,Number=2,Position=123456,LastPlayed="2026-10-23T12:00:00Z"};
+        var series=new Series{Id=1,Title="Show",Episodes=[first,latest,new(){Id=3,Season=1,Number=9}]};
+        var row=Assert.Single(HistoryEntry.From([series]));Assert.Same(latest,row.Episode);Assert.Equal("23.10.2026",row.DateLabel);Assert.Equal(8000,first.Position);Assert.Equal(123456,latest.Position);Assert.Equal(3,row.Series.Episodes.Count);
+    }
     static LibraryStore Store()=>new(Path.Combine(Path.GetTempPath(),"PCinema-history-coverage",Guid.NewGuid().ToString("N")));
     [Fact] public void DeletedFilesRemainInHistoryWithExactPositionAndMetadata()
     {
